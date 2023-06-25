@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>misskey/calckey/foundkey instance block checker</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      html {
+        color-scheme: light dark;
+        font-family: Roboto, Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>
+      <img
+        src="https://api.no-bitch.es/no%20javascript%3f"
+        alt="no javascript?"
+      />
+    </noscript>
+    <script type="module">
+      import { render, h } from "https://esm.sh/preact@10.15.1";
+      import {
+        useState,
+        useRef,
+        useEffect,
+        useCallback,
+      } from "https://esm.sh/preact@10.15.1/hooks";
+      import htm from "https://esm.sh/htm@3.1.1";
+      const html = htm.bind(h);
+      function InstanceBlocks({ instance }) {
+        const [instances, setInstances] = useState();
+        useEffect(() => {
+          let abort = false,
+            controller;
+          (async () => {
+            const limit = 10;
+            let offset = 0;
+            const domains = [];
+            const update = (loading) =>
+              setInstances([
+                ...domains.map(
+                  (e, i) =>
+                    html`<dt key=${i + "dt"}>
+                        <a
+                          href="https://${e.host}"
+                          style="text-decoration:none;color:inherit"
+                          target="_blank"
+                          rel="nofollow noindex noopener noreferrer"
+                        >
+                          <img
+                            src="https://icons.duckduckgo.com/ip3/${e.host}.ico"
+                            style="width:1em;height:1em;object-fit:contain;margin-right:0.25em;margin-bottom:-0.125em;line-height:1"
+                          />
+                          <u><b>${e.name || e.host}</b></u>
+                          ${" "}<span style="color:GrayText">(${e.host})</span>
+                        </a>
+                      </dt>
+                      <dd key=${i + "dd"} style="margin-bottom:0.5rem">
+                        ${[
+                          "isBlocked",
+                          "isNotResponding",
+                          "isSilenced",
+                          "isSuspended",
+                        ]
+                          .filter((k) => e[k])
+                          .map((e) =>
+                            e
+                              .replace(/([A-Z])/g, " $1")
+                              .toLowerCase()
+                              .slice(3)
+                          )
+                          .join(", ")}
+                      </dd>`
+                ),
+                ...(loading ? [html`<dt key="l">loading...</dt>`] : []),
+              ]);
+            update(true);
+            try {
+              while (1) {
+                controller = new AbortController();
+                const newDomains = await (
+                  await fetch(
+                    "https://" + instance + "/api/federation/instances",
+                    {
+                      headers: {
+                        "content-type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        sort: "+pubSub",
+                        host: null,
+                        blocked: true,
+                        limit,
+                        offset,
+                      }),
+                      method: "POST",
+                      signal: controller.signal,
+                    }
+                  )
+                ).json();
+                controller = null;
+                domains.push(...newDomains);
+                if (abort) return;
+                update(true);
+                if (newDomains.length < limit) break;
+                offset += limit;
+              }
+              update(false);
+            } catch (e) {
+              if (!abort) {
+                console.error(e);
+                setInstances(html`<dt>error loading instance blocks</dt>`);
+              }
+            }
+          })();
+          return () => {
+            console.log("aborting");
+            abort = true;
+            if (controller) controller.abort();
+          };
+        }, [instance]);
+        return html`<dl>${instances}</dl>`;
+      }
+      const useHash = () => {
+        const [hash, setHash] = useState(() => location.hash.slice(1));
+        useEffect(() => {
+          const handler = () => setHash(location.hash.slice(1));
+          window.addEventListener("hashchange", handler);
+          return () => {
+            window.removeEventListener("hashchange", handler);
+          };
+        }, []);
+        const updateHash = useCallback(
+          (newHash) => {
+            if (newHash !== hash) location.hash = "#" + newHash;
+          },
+          [hash]
+        );
+        return [hash, updateHash];
+      };
+      function useParams([params, set]) {
+        const p = new URLSearchParams(params);
+        return [
+          Object.fromEntries(p.entries()),
+          useCallback(
+            (o) => {
+              set(new URLSearchParams(o).toString());
+            },
+            [set]
+          ),
+        ];
+      }
+      function App() {
+        const [params, setParams] = useParams(useHash());
+        const instanceInput = useRef();
+        useEffect(() => {
+          instanceInput.current.value = params.instance || "";
+        }, [params.instance]);
+        return html`<h1>misskey/calckey/foundkey instance block checker</h1>
+          <form
+            onSubmit=${(e) => {
+              e.preventDefault();
+              setParams({ instance: instanceInput.current.value });
+            }}
+          >
+            <input
+              type="text"
+              placeholder="instance domain"
+              pattern="^[^\\s/]+$"
+              required
+              ref=${instanceInput}
+            />${" "}
+            <button>check blocks</button>
+          </form>
+          ${params.instance &&
+          html`<${InstanceBlocks} instance=${params.instance} />`}`;
+      }
+      render(html`<${App} />`, document.body);
+    </script>
+  </body>
+</html>
